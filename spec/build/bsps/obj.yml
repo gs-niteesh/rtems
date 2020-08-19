@@ -109,4 +109,5 @@ source:
 - bsps/shared/start/bootcard.c
 - bsps/shared/rtems-version.c
 - bsps/shared/ofw/ofw.c
+- bsps/shared/rtems/freebsd-compat/bus.c
 type: build
