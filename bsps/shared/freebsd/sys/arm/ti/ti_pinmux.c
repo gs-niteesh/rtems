@@ -34,9 +34,12 @@
  * Exposes pinmux module to pinctrl-compatible interface
  */
 #include <sys/cdefs.h>
+#ifndef __rtems__
 __FBSDID("$FreeBSD$");
+#endif /* __rtems__ */
 
 #include <sys/param.h>
+#ifndef __rtems__
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/module.h>
@@ -55,9 +58,26 @@ __FBSDID("$FreeBSD$");
 #include <dev/fdt/fdt_pinctrl.h>
 
 #include <arm/ti/omap4/omap4_scm_padconf.h>
+#else /* __rtems__ */
+#include <ofw/ofw_compat.h>
+#endif /* __rtems__ */
 #include <arm/ti/am335x/am335x_scm_padconf.h>
 #include <arm/ti/ti_cpuid.h>
+#ifndef __rtems__
 #include "ti_pinmux.h"
+#else /* __rtems__ */
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+#include <libfdt.h>
+#include <rtems/bspIo.h>
+#include <rtems/sysinit.h>
+#include <rtems/freebsd-compat/resource.h>
+#include <rtems/freebsd-compat/device.h>
+#include <rtems/freebsd-compat/bus.h>
+#include <rtems/freebsd-compat/rman.h>
+#include <arm/ti/ti_pinmux.h>
+#endif /* __rtems__ */
 
 struct pincfg {
 	uint32_t reg;
@@ -68,6 +88,15 @@ static struct resource_spec ti_pinmux_res_spec[] = {
 	{ SYS_RES_MEMORY,	0,	RF_ACTIVE },	/* Control memory window */
 	{ -1, 0 }
 };
+
+#ifdef __rtems__
+struct ti_pinmux_softc {
+	device_t		sc_dev;
+	struct resource *	sc_res[4];
+	bus_space_tag_t		sc_bst;
+	bus_space_handle_t	sc_bsh;
+};
+#endif /* __rtems__ */
 
 static struct ti_pinmux_softc *ti_pinmux_sc;
 
@@ -149,16 +178,22 @@ ti_pinmux_padconf_set_internal(struct ti_pinmux_softc *sc,
 
 	/* couldn't find the mux mode */
 	if (mode >= 8) {
+#ifndef __rtems__
 		printf("Invalid mode \"%s\"\n", muxmode);
+#else /* __rtems__ */
+		printk("Invalid mode \"%s\"\n", muxmode);
+#endif /* __rtems__ */
 		return (EINVAL);
 	}
 
 	/* set the mux mode */
 	reg_val |= (uint16_t)(mode & ti_pinmux_dev->padconf_muxmode_mask);
 
+#ifndef __rtems__
 	if (bootverbose)
 		device_printf(sc->sc_dev, "setting internal %x for %s\n",
 		    reg_val, muxmode);
+#endif /* __rtems__ */
 	/* write the register value (16-bit writes) */
 	ti_pinmux_write_2(sc, padconf->reg_off, reg_val);
 
@@ -350,12 +385,14 @@ ti_pinmux_configure_pins(device_t dev, phandle_t cfgxref)
 		return (0); /* Empty property is not an error. */
 
 	for (i = 0, cfg = cfgtuples; i < ntuples; i++, cfg++) {
+#ifndef __rtems__
 		if (bootverbose) {
 			char name[32];
 			OF_getprop(cfgnode, "name", &name, sizeof(name));
 			printf("%16s: muxreg 0x%04x muxval 0x%02x\n",
 			    name, cfg->reg, cfg->conf);
 		}
+#endif /* __rtems__ */
 
 		/* write the register value (16-bit writes) */
 		ti_pinmux_write_2(sc, cfg->reg, cfg->conf);
@@ -370,6 +407,7 @@ ti_pinmux_configure_pins(device_t dev, phandle_t cfgxref)
  * Device part of OMAP SCM driver
  */
 
+#ifndef __rtems__
 static int
 ti_pinmux_probe(device_t dev)
 {
@@ -404,6 +442,25 @@ ti_pinmux_probe(device_t dev)
 	device_set_desc(dev, "TI Pinmux Module");
 	return (BUS_PROBE_DEFAULT);
 }
+#endif /* __rtems__ */
+
+static void
+beagle_pinctrl_configure_children(device_t dev, phandle_t parent)
+{
+	phandle_t node;
+	int len;
+	uint32_t phandle;
+
+	for (node = OF_child(parent); node != 0; node = OF_peer(node)) {
+		if (rtems_ofw_node_status_okay(node)) {
+			beagle_pinctrl_configure_children(dev, node);
+			len = OF_getencprop(node, "pinctrl-0", &phandle, sizeof(phandle));
+			if (len == sizeof(phandle)) {
+				ti_pinmux_configure_pins(dev, phandle);
+			}
+		}
+	}
+}
 
 /**
  *	ti_pinmux_attach - attaches the pinmux to the simplebus
@@ -425,7 +482,11 @@ ti_pinmux_attach(device_t dev)
 	sc->sc_dev = dev;
 
 	if (bus_alloc_resources(dev, ti_pinmux_res_spec, sc->sc_res)) {
+#ifndef __rtems__
 		device_printf(dev, "could not allocate resources\n");
+#else /* __rtems__ */
+		printk("pinmux: Could not allocat resources\n");
+#endif /* __rtems__ */
 		return (ENXIO);
 	}
 
@@ -435,12 +496,40 @@ ti_pinmux_attach(device_t dev)
 	if (ti_pinmux_sc == NULL)
 		ti_pinmux_sc = sc;
 
+#ifndef __rtems__
 	fdt_pinctrl_register(dev, "pinctrl-single,pins");
 	fdt_pinctrl_configure_tree(dev);
+#else /* __rtems__ */
+	beagle_pinctrl_configure_children(dev, OF_peer(0));
+#endif /* __rtems__ */
 
 	return (0);
 }
 
+void
+beagle_pinmux_init(phandle_t node)
+{
+	static struct device pinmux_dev;
+	static struct ti_pinmux_softc pinmux_softc;
+
+	if (!rtems_ofw_is_node_compatible(node, "pinctrl-single"))
+		return ;
+
+	switch (ti_chip()) {
+	case CHIP_AM335X:
+		ti_pinmux_dev = &ti_am335x_pinmux_dev;
+		break;
+	default:
+		printk("Unknown CPU in pinmux\n");
+		return ;
+	}
+
+	pinmux_dev.softc = &pinmux_softc;
+	pinmux_dev.node  = node;
+	ti_pinmux_attach(&pinmux_dev);
+}
+
+#ifndef __rtems__
 static device_method_t ti_pinmux_methods[] = {
 	DEVMETHOD(device_probe,		ti_pinmux_probe),
 	DEVMETHOD(device_attach,	ti_pinmux_attach),
@@ -459,3 +548,4 @@ static driver_t ti_pinmux_driver = {
 static devclass_t ti_pinmux_devclass;
 
 DRIVER_MODULE(ti_pinmux, simplebus, ti_pinmux_driver, ti_pinmux_devclass, 0, 0);
+#endif /* __rtems__ */
