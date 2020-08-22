@@ -48,9 +48,12 @@
  *
  */
 #include <sys/cdefs.h>
+#ifndef __rtems__
 __FBSDID("$FreeBSD$");
+#endif /* __rtems__ */
 
 #include <sys/param.h>
+#ifndef __rtems__
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/module.h>
@@ -70,6 +73,27 @@ __FBSDID("$FreeBSD$");
 
 #include "ti_scm.h"
 #include "ti_cpuid.h"
+#else /* __rtems__ */
+#include <arm/ti/ti_scm.h>
+#include <arm/ti/ti_cpuid.h>
+#include <rtems/freebsd-compat/resource.h>
+#include <rtems/freebsd-compat/device.h>
+#include <rtems/freebsd-compat/rman.h>
+#include <rtems/freebsd-compat/bus.h>
+#include <rtems/bspIo.h>
+#include <ofw/ofw_compat.h>
+#include <stdlib.h>
+#include <errno.h>
+#endif /* __rtems__ */
+
+#ifdef __rtems__
+struct ti_scm_softc {
+	device_t		sc_dev;
+	struct resource *	sc_res[4];
+	bus_space_tag_t		sc_bst;
+	bus_space_handle_t	sc_bsh;
+};
+#endif /* __rtems__ */
 
 static struct resource_spec ti_scm_res_spec[] = {
 	{ SYS_RES_MEMORY,	0,	RF_ACTIVE },	/* Control memory window */
@@ -83,6 +107,7 @@ static struct ti_scm_softc *ti_scm_sc;
 #define	ti_scm_write_4(sc, reg, val)		\
     bus_space_write_4((sc)->sc_bst, (sc)->sc_bsh, (reg), (val))
 
+#ifndef __rtems__
 /*
  * Device part of OMAP SCM driver
  */
@@ -106,6 +131,7 @@ ti_scm_probe(device_t dev)
 	device_set_desc(dev, "TI Control Module");
 	return (BUS_PROBE_DEFAULT);
 }
+#endif /* __rtems__ */
 
 /**
  *	ti_scm_attach - attaches the timer to the simplebus
@@ -125,7 +151,11 @@ ti_scm_attach(device_t dev)
 	sc->sc_dev = dev;
 
 	if (bus_alloc_resources(dev, ti_scm_res_spec, sc->sc_res)) {
+#ifndef __rtems__
 		device_printf(dev, "could not allocate resources\n");
+#else /* __rtems__ */
+		printk("ti_scm: could not allocate resources\n");
+#endif /* __rtems__ */
 		return (ENXIO);
 	}
 
@@ -135,10 +165,32 @@ ti_scm_attach(device_t dev)
 
 	ti_scm_sc = sc;
 
+#ifndef __rtems__
 	/* Attach platform extensions, if any. */
 	bus_generic_probe(dev);
 
 	return (bus_generic_attach(dev));
+#else /* __rtems__ */
+	return (0);
+#endif /* __rtems__ */
+}
+
+void beagle_scm_init(phandle_t node)
+{
+	static struct device ti_scm_dev;
+	static struct ti_scm_softc ti_scm_sc;
+	static bool initialized = false;
+
+	if (initialized)
+		return ;
+
+	if (!rtems_ofw_is_node_compatible(node, "syscon"))
+		return ;
+
+	ti_scm_dev.softc = &ti_scm_sc;
+	ti_scm_dev.node = node;
+	ti_scm_attach(&ti_scm_dev);
+	initialized = true;
 }
 
 int
@@ -162,6 +214,7 @@ ti_scm_reg_write_4(uint32_t reg, uint32_t val)
 }
 
 
+#ifndef __rtems__
 static device_method_t ti_scm_methods[] = {
 	DEVMETHOD(device_probe,		ti_scm_probe),
 	DEVMETHOD(device_attach,	ti_scm_attach),
@@ -179,3 +232,4 @@ static devclass_t ti_scm_devclass;
 
 EARLY_DRIVER_MODULE(ti_scm, simplebus, ti_scm_driver, ti_scm_devclass, 0, 0,
     BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE); 
+#endif /* __rtems__ */

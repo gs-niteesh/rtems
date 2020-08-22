@@ -27,9 +27,12 @@
  */
 
 #include <sys/cdefs.h>
+#ifndef __rtems__
 __FBSDID("$FreeBSD$");
+#endif /* __rtems__ */
 
 #include <sys/param.h>
+#ifndef __rtems__
 #include <sys/systm.h>
 #include <sys/bus.h>
 #include <sys/kernel.h>
@@ -44,9 +47,11 @@ __FBSDID("$FreeBSD$");
 #include <machine/intr.h>
 
 #include <arm/ti/tivar.h>
+#endif /* __rtems__ */
 #include <arm/ti/ti_scm.h>
 #include <arm/ti/ti_prcm.h>
 
+#ifndef __rtems__
 #include <dev/ofw/openfirm.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
@@ -54,6 +59,19 @@ __FBSDID("$FreeBSD$");
 #include <machine/bus.h>
 
 #include "am335x_scm.h"
+#else /* __rtems__ */
+#include <ofw/ofw_compat.h>
+#include <arm/ti/am335x/am335x_scm.h>
+#include <rtems/sysinit.h>
+#include <rtems/counter.h>
+#include <rtems/bspIo.h>
+#include <rtems/freebsd-compat/bus.h>
+#include <rtems/freebsd-compat/resource.h>
+#include <rtems/freebsd-compat/rman.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <stdio.h>
+#endif /* __rtems__ */
 
 #define CM_PER				0
 #define CM_PER_L4LS_CLKSTCTRL		(CM_PER + 0x000)
@@ -132,6 +150,10 @@ __FBSDID("$FreeBSD$");
 #define PRM_DEVICE_OFFSET		0xF00
 #define PRM_RSTCTRL			(PRM_DEVICE_OFFSET + 0x00)
 
+#ifdef __rtems__
+#define DELAY(x) rtems_counter_delay_nanoseconds(((x) * 1000))
+#endif /* __rtems__ */
+
 struct am335x_prcm_softc {
 	struct resource *	res[2];
 	bus_space_tag_t		bst;
@@ -158,7 +180,9 @@ static int am335x_clk_get_sysclk_freq(struct ti_clock_dev *clkdev, unsigned int 
 static int am335x_clk_get_arm_fclk_freq(struct ti_clock_dev *clkdev, unsigned int *freq);
 static int am335x_clk_get_arm_disp_freq(struct ti_clock_dev *clkdev, unsigned int *freq);
 static int am335x_clk_set_arm_disp_freq(struct ti_clock_dev *clkdev, unsigned int freq);
+#ifndef __rtems__
 static void am335x_prcm_reset(void);
+#endif /* __rtems__ */
 static int am335x_clk_cpsw_activate(struct ti_clock_dev *clkdev);
 static int am335x_clk_musb0_activate(struct ti_clock_dev *clkdev);
 static int am335x_clk_lcdc_activate(struct ti_clock_dev *clkdev);
@@ -406,6 +430,7 @@ static struct am335x_clk_details g_am335x_clk_details[] = {
 
 void am335x_prcm_setup_dmtimer(int);
 
+#ifndef __rtems__
 static int
 am335x_prcm_probe(device_t dev)
 {
@@ -420,6 +445,7 @@ am335x_prcm_probe(device_t dev)
 
 	return (ENXIO);
 }
+#endif /* __rtems__ */
 
 static int
 am335x_prcm_attach(device_t dev)
@@ -430,7 +456,11 @@ am335x_prcm_attach(device_t dev)
 		return (ENXIO);
 
 	if (bus_alloc_resources(dev, am335x_prcm_spec, sc->res)) {
+#ifndef __rtems__
 		device_printf(dev, "could not allocate resources\n");
+#else /* __rtems__ */
+		printk("am335x_prcm: could not allocated resources\n");
+#endif /* __rtems__ */
 		return (ENXIO);
 	}
 
@@ -438,11 +468,27 @@ am335x_prcm_attach(device_t dev)
 	sc->bsh = rman_get_bushandle(sc->res[0]);
 
 	am335x_prcm_sc = sc;
+#ifndef __rtems__
 	ti_cpu_reset = am335x_prcm_reset;
+#endif /* __rtems__ */
 
 	return (0);
 }
 
+void am335x_prcm_init(phandle_t node)
+{
+	static struct device am335x_prcm_dev;
+	static struct am335x_prcm_softc am335x_prcm_sc;
+
+	if (!rtems_ofw_is_node_compatible(node, "ti,am3-prcm"))
+		return ;
+
+	am335x_prcm_dev.softc = &am335x_prcm_sc;
+	am335x_prcm_dev.node = node;
+	am335x_prcm_attach(&am335x_prcm_dev);
+}
+
+#ifndef __rtems__
 static void
 am335x_prcm_new_pass(device_t dev)
 {
@@ -498,6 +544,7 @@ EARLY_DRIVER_MODULE(am335x_prcm, simplebus, am335x_prcm_driver,
 	am335x_prcm_devclass, 0, 0, BUS_PASS_BUS + BUS_PASS_ORDER_MIDDLE);
 MODULE_VERSION(am335x_prcm, 1);
 MODULE_DEPEND(am335x_prcm, ti_scm, 1, 1, 1);
+#endif /* __rtems__ */
 
 static struct am335x_clk_details*
 am335x_clk_details(clk_ident_t id)
@@ -761,11 +808,13 @@ am335x_clk_set_arm_disp_freq(struct ti_clock_dev *clkdev, unsigned int freq)
 	return(0);
 }
 
+#ifndef __rtems__
 static void
 am335x_prcm_reset(void)
 {
 	prcm_write_4(PRM_RSTCTRL, (1<<1));
 }
+#endif /* __rtems__ */
 
 static int
 am335x_clk_cpsw_activate(struct ti_clock_dev *clkdev)

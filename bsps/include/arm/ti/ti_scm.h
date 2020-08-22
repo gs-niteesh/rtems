@@ -44,13 +44,21 @@
  */
 #ifndef _TI_SCM_H_
 #define _TI_SCM_H_
+#ifdef __rtems__
+#include <ofw/ofw.h>
+#include <stdint.h>
+#endif /* __rtems__ */
 
+#ifndef __rtems__
 struct ti_scm_softc {
 	device_t		sc_dev;
 	struct resource *	sc_res[4];
 	bus_space_tag_t		sc_bst;
 	bus_space_handle_t	sc_bsh;
 };
+#else /* __rtems__ */
+void beagle_scm_init(phandle_t node);
+#endif /* __rtems__ */
 
 int ti_scm_reg_read_4(uint32_t reg, uint32_t *val);
 int ti_scm_reg_write_4(uint32_t reg, uint32_t val);
