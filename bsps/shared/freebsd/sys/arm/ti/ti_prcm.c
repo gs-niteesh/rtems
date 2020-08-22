@@ -41,9 +41,12 @@
  *
  */
 #include <sys/cdefs.h>
+#ifndef __rtems__
 __FBSDID("$FreeBSD$");
+#endif /* __rtems__ */
 
 #include <sys/param.h>
+#ifndef __rtems__
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/module.h>
@@ -56,6 +59,12 @@ __FBSDID("$FreeBSD$");
 #include <machine/bus.h>
 #include <machine/resource.h>
 #include <machine/intr.h>
+#else /* __rtems__ */
+#include <rtems/bspIo.h>
+#include <rtems/freebsd-compat/bus.h>
+#include <assert.h>
+#include <errno.h>
+#endif /* __rtems__ */
 
 #include <arm/ti/ti_cpuid.h>
 #include <arm/ti/ti_prcm.h>
@@ -105,8 +114,12 @@ ti_prcm_clk_dev(clk_ident_t clk)
 		break;
 #endif
 	}
+#ifndef __rtems__
 	if (clk_dev == NULL)
 		panic("No clock devmap found");
+#else /* __rtems__ */
+	assert(clk_dev != NULL);
+#endif /* __rtems__ */
 	while (clk_dev->id != INVALID_CLK_IDENT) {
 		if (clk_dev->id == clk) {
 			return (clk_dev);
@@ -115,7 +128,11 @@ ti_prcm_clk_dev(clk_ident_t clk)
 	}
 
 	/* Sanity check we managed to find the clock */
+#ifndef __rtems__
 	printf("ti_prcm: Failed to find clock device (%d)\n", clk);
+#else /* __rtems__ */
+	printk("ti_prcm: Failed to find clock device (%d)\n", clk);
+#endif /* __rtems__ */
 	return (NULL);
 }
 

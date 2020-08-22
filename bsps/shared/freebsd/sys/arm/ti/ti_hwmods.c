@@ -27,9 +27,12 @@
  */
 
 #include <sys/cdefs.h>
+#ifndef __rtems__
 __FBSDID("$FreeBSD$");
+#endif /* __rtems__ */
 
 #include <sys/param.h>
+#ifndef __rtems__
 #include <sys/systm.h>
 #include <sys/bus.h>
 #include <sys/kernel.h>
@@ -40,6 +43,11 @@ __FBSDID("$FreeBSD$");
 
 #include <machine/bus.h>
 #include <machine/fdt.h>
+#else /* __rtems__ */
+#include <ofw/ofw_compat.h>
+#include <rtems/bspIo.h>
+#include <string.h>
+#endif /* __rtems__ */
 
 #include <arm/ti/ti_prcm.h>
 #include <arm/ti/ti_hwmods.h>
@@ -108,7 +116,11 @@ ti_get_hwmods_prop(phandle_t node, void **name)
 }
 
 clk_ident_t
+#ifndef __rtems__
 ti_hwmods_get_clock(device_t dev)
+#else /* __rtems__ */
+ti_hwmods_get_clock(phandle_t dev)
+#endif /* __rtems__ */
 {
 	phandle_t node;
 	int len, l;
@@ -117,8 +129,13 @@ ti_hwmods_get_clock(device_t dev)
 	int clk;
 	struct hwmod *hw;
 
+#ifndef __rtems__
 	if ((node = ofw_bus_get_node(dev)) == 0)
 		return (INVALID_CLK_IDENT);
+#else /* __rtems__ */
+	if ((node = dev) == 0)
+		return (INVALID_CLK_IDENT);
+#endif /* __rtems__ */
 
 	if ((len = ti_get_hwmods_prop(node, (void **)&name)) <= 0)
 		return (INVALID_CLK_IDENT);
@@ -141,12 +158,17 @@ ti_hwmods_get_clock(device_t dev)
 	}
 
 	if (len > 0)
+#ifndef __rtems__
 		device_printf(dev, "WARNING: more than one ti,hwmod \n");
+#else /* __rtems__ */
+		printk("ti_hwmods: WARNING more than one ti,hwmods\n");
+#endif /* __rtems__ */
 
 	OF_prop_free(buf);
 	return (clk);
 }
 
+#ifndef __rtems__
 int ti_hwmods_contains(device_t dev, const char *hwmod)
 {
 	phandle_t node;
@@ -212,3 +234,4 @@ ti_hwmods_get_unit(device_t dev, const char *hwmod)
 	OF_prop_free(buf);
 	return (result);
 } 
+#endif /* __rtems__ */

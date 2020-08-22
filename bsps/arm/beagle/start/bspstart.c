@@ -22,6 +22,8 @@
 #include "bsp-soc-detect.h"
 #include <arm/ti/ti_cpuid.h>
 #include <arm/ti/ti_pinmux.h>
+#include <arm/ti/ti_prcm.h>
+#include <arm/ti/ti_scm.h>
 #include <ofw/ofw.h>
 
 #include "bspdebug.h"
@@ -71,6 +73,8 @@ static void traverse_fdt_nodes( phandle_t node )
      * Put all driver initialization functions here
      */
     beagle_pinmux_init(node);
+    am335x_prcm_init(node);
+    beagle_scm_init(node);
   }
 }
 

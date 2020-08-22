@@ -45,6 +45,9 @@
  */
 #ifndef _TI_PRCM_H_
 #define _TI_PRCM_H_
+#ifdef __rtems__
+#include <ofw/ofw.h>
+#endif /* __rtems__ */
 
 typedef enum {
 
@@ -195,6 +198,10 @@ struct ti_clock_dev {
 	int (*clk_get_source_freq)(struct ti_clock_dev *clkdev,
 	    unsigned int *freq);
 };
+
+#ifdef __rtems__
+void am335x_prcm_init(phandle_t node);
+#endif /* __rtems__ */
 
 int ti_prcm_clk_valid(clk_ident_t clk);
 int ti_prcm_clk_enable(clk_ident_t clk);

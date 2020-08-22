@@ -27,11 +27,19 @@
  */
 #ifndef _TI_HWMODS_H_
 #define _TI_HWMODS_H_
+#ifdef __rtems__
+#include <ofw/ofw_compat.h>
+#include <arm/ti/ti_prcm.h>
+#endif /* __rtems__ */
 
+#ifndef __rtems__
 clk_ident_t ti_hwmods_get_clock(device_t dev);
 int ti_hwmods_contains(device_t dev, const char *hwmod);
 
 /* Returns the N from "hwmodN" in the ti,hwmods property; 0 on failure. */
 int ti_hwmods_get_unit(device_t dev, const char *hwmod);
+#else /* __rtems__ */
+clk_ident_t ti_hwmods_get_clock(phandle_t dev);
+#endif /* __rtems__ */
 
 #endif /* _TI_HWMODS_H_ */ 
