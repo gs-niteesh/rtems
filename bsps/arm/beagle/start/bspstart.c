@@ -24,9 +24,16 @@
 #include <arm/ti/ti_pinmux.h>
 #include <arm/ti/ti_prcm.h>
 #include <arm/ti/ti_scm.h>
+#include <rtems.h>
 #include <ofw/ofw.h>
+#include <bsp/i2c.h>
+#include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
 
 #include "bspdebug.h"
+
+#define MIN(l,r) ((l) < (r) ? (l) : (r))
 
 void bsp_start(void)
 {
@@ -75,6 +82,7 @@ static void traverse_fdt_nodes( phandle_t node )
     beagle_pinmux_init(node);
     am335x_prcm_init(node);
     beagle_scm_init(node);
+    beagle_i2c_init(node);
   }
 }
 
@@ -85,24 +93,40 @@ static void bbb_drivers_initialize(void)
   traverse_fdt_nodes(node);
 }
 
-static void bbb_i2c_0_initialize(void)
+int beagle_get_node_unit(phandle_t node)
 {
-  int err;
+  char name[30];
+  char prop[30];
+  char prop_val[30];
+  static int unit;
+  phandle_t aliases;
+  int rv;
+  int i;
 
-  err = am335x_i2c_bus_register(BBB_I2C_0_BUS_PATH,
-                                AM335X_I2C0_BASE,
-                                I2C_BUS_CLOCK_DEFAULT,
-                                BBB_I2C0_IRQ);
-  if (err != 0) {
-    printk("rtems i2c-0: Device could not be registered (%d)", err);
+  rv = rtems_ofw_get_prop(node, "name", name, sizeof(name));
+  if (rv <= 0)
+    return unit++;
+
+  aliases = rtems_ofw_find_device("/aliases");
+
+  rv = rtems_ofw_next_prop(aliases, NULL, &prop[0], sizeof(prop));
+
+  while (rv > 0) {
+    rv = rtems_ofw_get_prop(aliases, prop, prop_val, sizeof(prop_val));
+
+    if (strstr(prop_val, name) != NULL) {
+      for (i = strlen(prop) - 1; i >= 0; i--) {
+        if (!isdigit(prop[i]))
+          break;
+      }
+
+      return strtol(&prop[i + 1], NULL, 10);
+    }
+    rv = rtems_ofw_next_prop(aliases, prop, prop, sizeof(prop));
   }
-}
 
-RTEMS_SYSINIT_ITEM(
-  bbb_i2c_0_initialize,
-  RTEMS_SYSINIT_LAST,
-  RTEMS_SYSINIT_ORDER_LAST_BUT_5
-);
+  return unit++;
+}
 
 RTEMS_SYSINIT_ITEM(
 	bbb_drivers_initialize,

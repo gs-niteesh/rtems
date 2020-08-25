@@ -25,21 +25,12 @@
 #include <bsp/bbb-gpio.h>
 #include <rtems/score/assert.h>
 #include <dev/i2c/i2c.h>
+#include <arm/ti/ti_hwmods.h>
+#include <ofw/ofw.h>
 
 typedef struct bbb_i2c_bus {
   i2c_bus base;
   volatile bbb_i2c_regs *regs;
-  struct {
-    volatile uint32_t *ctrl_clkctrl;
-    volatile uint32_t *i2c_clkctrl;
-    volatile uint32_t *clkstctrl;
-  } clkregs;
-  struct {
-    volatile uint32_t *conf_sda;
-    uint32_t mmode_sda;
-    volatile uint32_t *conf_scl;
-    uint32_t mmode_scl;
-  } pinregs;
   rtems_id task_id;
   rtems_vector_number irq;
   i2c_msg *buffer;
@@ -56,109 +47,35 @@ typedef struct bbb_i2c_bus {
 #else
 #define debug_print(fmt, args...)
 #endif
+/*
+ * Here we assume the number of i2c nodes
+ * will be less than 100.
+ */
+#define PATH_LEN strlen("/dev/i2c-xx")
 
 static int am335x_i2c_fill_registers(
   bbb_i2c_bus *bus,
-  uintptr_t register_base
+  phandle_t    node
 )
 {
-  /* FIXME: The pin handling should be replaced by a proper pin handling during
-   * initialization. This one is heavily board specific. */
-#if ! IS_AM335X
-  printk ("The I2C driver currently only works on Beagle Bone. Please add your pin configs.");
-  return EINVAL;
-#endif
-  bus->regs = (volatile bbb_i2c_regs *) register_base;
-  switch ((intptr_t) bus->regs) {
-  case AM335X_I2C0_BASE:
-    bus->clkregs.ctrl_clkctrl = &REG(AM335X_SOC_CM_WKUP_REGS +
-                                 AM335X_CM_WKUP_CONTROL_CLKCTRL);
-    bus->clkregs.i2c_clkctrl = &REG(AM335X_SOC_CM_WKUP_REGS +
-                                 AM335X_CM_WKUP_I2C0_CLKCTRL);
-    bus->clkregs.clkstctrl = &REG(AM335X_SOC_CM_WKUP_REGS +
-                                   AM335X_CM_WKUP_CLKSTCTRL);
-    bus->pinregs.conf_sda = &REG(AM335X_PADCONF_BASE + AM335X_CONF_I2C0_SDA);
-    bus->pinregs.mmode_sda = 0;
-    bus->pinregs.conf_scl = &REG(AM335X_PADCONF_BASE + AM335X_CONF_I2C0_SCL);
-    bus->pinregs.mmode_scl = 0;
-    break;
-  case AM335X_I2C1_BASE:
-    bus->clkregs.ctrl_clkctrl = &REG(AM335X_SOC_CM_WKUP_REGS +
-                                 AM335X_CM_WKUP_CONTROL_CLKCTRL);
-    bus->clkregs.i2c_clkctrl = &REG(AM335X_CM_PER_ADDR +
-                                 AM335X_CM_PER_I2C1_CLKCTRL);
-    bus->clkregs.clkstctrl = NULL;
-    bus->pinregs.conf_sda = &REG(AM335X_PADCONF_BASE + AM335X_CONF_SPI0_D1);
-    bus->pinregs.mmode_sda = 2;
-    bus->pinregs.conf_scl = &REG(AM335X_PADCONF_BASE + AM335X_CONF_SPI0_CS0);
-    bus->pinregs.mmode_scl = 2;
-    break;
-  case AM335X_I2C2_BASE:
-    bus->clkregs.ctrl_clkctrl = &REG(AM335X_SOC_CM_WKUP_REGS +
-                                 AM335X_CM_WKUP_CONTROL_CLKCTRL);
-    bus->clkregs.i2c_clkctrl = &REG(AM335X_CM_PER_ADDR +
-                                 AM335X_CM_PER_I2C2_CLKCTRL);
-    bus->clkregs.clkstctrl = NULL;
-    bus->pinregs.conf_sda = &REG(AM335X_PADCONF_BASE + AM335X_CONF_UART1_CTSN);
-    bus->pinregs.mmode_sda = 3;
-    bus->pinregs.conf_scl = &REG(AM335X_PADCONF_BASE + AM335X_CONF_UART1_RTSN);
-    bus->pinregs.mmode_scl = 3;
-    break;
-  default:
+  ssize_t rv;
+  rtems_ofw_memory_area reg;
+
+  rv = rtems_ofw_get_reg(node, &reg, sizeof(reg));
+  if (rv <= 0)
     return EINVAL;
-  }
+
+  bus->regs = (volatile bbb_i2c_regs *)reg.start;
+
   return 0;
 }
 
-static void am335x_i2c_pinmux( bbb_i2c_bus *bus )
+static void am335x_i2c_module_clk_enable( phandle_t node )
 {
-  *bus->pinregs.conf_sda =
-    ( BBB_RXACTIVE | BBB_SLEWCTRL | bus->pinregs.mmode_sda);
+  clk_ident_t i2c_clk;
 
-  *bus->pinregs.conf_scl =
-    ( BBB_RXACTIVE | BBB_SLEWCTRL | bus->pinregs.mmode_scl);
-}
-
-static void am335x_i2c_module_clk_enable( bbb_i2c_bus *bus )
-{
-  volatile uint32_t *ctrl_clkctrl = bus->clkregs.ctrl_clkctrl;
-  volatile uint32_t *i2c_clkctrl = bus->clkregs.i2c_clkctrl;
-  volatile uint32_t *clkstctrl = bus->clkregs.clkstctrl;
-
-  /* Writing to MODULEMODE field of AM335X_CM_WKUP_I2C0_CLKCTRL register. */
-  *i2c_clkctrl |= AM335X_CM_WKUP_I2C0_CLKCTRL_MODULEMODE_ENABLE;
-
-  /* Waiting for MODULEMODE field to reflect the written value. */
-  while ( AM335X_CM_WKUP_I2C0_CLKCTRL_MODULEMODE_ENABLE !=
-          ( *i2c_clkctrl & AM335X_CM_WKUP_I2C0_CLKCTRL_MODULEMODE ) )
-  { /* busy wait */ }
-
-  /*
-   * Waiting for IDLEST field in AM335X_CM_WKUP_CONTROL_CLKCTRL
-   * register to attain desired value.
-   */
-  while ( ( AM335X_CM_WKUP_CONTROL_CLKCTRL_IDLEST_FUNC <<
-            AM335X_CM_WKUP_CONTROL_CLKCTRL_IDLEST_SHIFT ) !=
-          ( *ctrl_clkctrl & AM335X_CM_WKUP_I2C0_CLKCTRL_IDLEST ) )
-  { /* busy wait */ }
-
-  if ( clkstctrl != NULL ) {
-    /*
-     * Waiting for CLKACTIVITY_I2C0_GFCLK field in AM335X_CM_WKUP_CLKSTCTRL
-     * register to attain desired value.
-     */
-    while ( AM335X_CM_WKUP_CLKSTCTRL_CLKACTIVITY_I2C0_GFCLK !=
-            ( *clkstctrl & AM335X_CM_WKUP_CLKSTCTRL_CLKACTIVITY_I2C0_GFCLK ) )
-    { /* busy wait */ }
-  }
-
-  /*
-   * Waiting for IDLEST field in AM335X_CM_WKUP_I2C0_CLKCTRL register to attain
-   * desired value.
-   */
-  while ( ( AM335X_CM_WKUP_I2C0_CLKCTRL_IDLEST_FUNC <<
-            AM335X_CM_WKUP_I2C0_CLKCTRL_IDLEST_SHIFT ) !=
-          ( *i2c_clkctrl & AM335X_CM_WKUP_I2C0_CLKCTRL_IDLEST ) ) ;
+  i2c_clk = ti_hwmods_get_clock(node);
+  ti_prcm_clk_enable(i2c_clk);
 }
 
 static int am335x_i2c_set_clock(
@@ -453,18 +370,16 @@ static void am335x_i2c_destroy( i2c_bus *base )
   i2c_bus_destroy_and_free( &bus->base );
 }
 
-int am335x_i2c_bus_register(
-  const char         *bus_path,
-  uintptr_t           register_base,
-  uint32_t            input_clock,
-  rtems_vector_number irq
+static int am335x_i2c_bus_register(
+  phandle_t           node
 )
 {
-  bbb_i2c_bus      *bus;
-  rtems_status_code sc;
-  int               err;
-
-  (void) input_clock; /* FIXME: Unused. Left for compatibility. */
+  bbb_i2c_bus        *bus;
+  rtems_status_code   sc;
+  rtems_vector_number irq;
+  int                 err;
+  int                 unit;
+  char                bus_path[PATH_LEN];
 
   bus = (bbb_i2c_bus *) i2c_bus_alloc_and_init( sizeof( *bus ) );
 
@@ -472,15 +387,24 @@ int am335x_i2c_bus_register(
     return -1;
   }
 
+  unit = beagle_get_node_unit(node);
+
+  snprintf(bus_path, PATH_LEN, "/dev/i2c-%d", unit);
+
+  err = rtems_ofw_get_interrupts(node, &irq, sizeof(irq));
+  if (err < 1) {
+    ( *bus->base.destroy )( &bus->base );
+    rtems_set_errno_and_return_minus_one( err );
+  }
   bus->irq = irq;
 
-  err = am335x_i2c_fill_registers(bus, register_base);
+  err = am335x_i2c_fill_registers(bus, node);
   if (err != 0) {
     ( *bus->base.destroy )( &bus->base );
     rtems_set_errno_and_return_minus_one( err );
   }
-  am335x_i2c_module_clk_enable(bus);
-  am335x_i2c_pinmux( bus );
+
+  am335x_i2c_module_clk_enable(node);
   err = am335x_i2c_reset( bus );
   if (err != 0) {
     ( *bus->base.destroy )( &bus->base );
@@ -505,4 +429,16 @@ int am335x_i2c_bus_register(
   bus->base.destroy = am335x_i2c_destroy;
 
   return i2c_bus_register( &bus->base, bus_path );
+}
+
+void beagle_i2c_init(phandle_t node)
+{
+  int rv;
+
+  if (!rtems_ofw_is_node_compatible(node, "ti,omap4-i2c"))
+    return ;
+
+  rv = am335x_i2c_bus_register(node);
+  if (rv != 0)
+    printk("i2c: Could not register device (%d)\n", rv);
 }
