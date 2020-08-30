@@ -23,6 +23,8 @@
 #include <rtems/score/armv4.h>
 
 #include <libcpu/arm-cp15.h>
+#include <ofw/ofw.h>
+#include <arm/ti/ti_cpuid.h>
 
 struct omap_intr
 {
@@ -30,19 +32,7 @@ struct omap_intr
   int size;
 };
 
-#if IS_DM3730
-static struct omap_intr omap_intr = {
-  .base = OMAP3_DM37XX_INTR_BASE,
-  .size = 0x1000,
-};
-#endif
-
-#if IS_AM335X
-static struct omap_intr omap_intr = {
-  .base = OMAP3_AM335X_INTR_BASE,
-  .size = 0x1000,
-};
-#endif
+static struct omap_intr omap_intr;
 
 /* Enables interrupts at the Interrupt Controller side. */
 static inline void omap_irq_ack(void)
@@ -123,6 +113,24 @@ rtems_status_code bsp_interrupt_facility_initialize(void)
 {
   int i;
   uint32_t intc_ilrx;
+  int rv;
+  int chip;
+  phandle_t node;
+  rtems_ofw_memory_area intr_reg;
+
+  chip = ti_chip();
+
+  if (chip == CHIP_AM335X) {
+    node = rtems_ofw_find_device_by_compat("ti,am33xx-intc");
+  } else if (chip == CHIP_OMAP_3) {
+    node = rtems_ofw_find_device_by_compat("ti,omap3-intc");
+  }
+  rv = rtems_ofw_get_reg(node, &intr_reg, sizeof(intr_reg));
+  /* Should we fatal? (using assert temporarily) */
+  assert(rv == 8);
+
+  omap_intr.base = intr_reg.start;
+  omap_intr.size = intr_reg.size;
 
   /* AM335X TRM 6.2.1 Initialization Sequence */
   mmio_write(omap_intr.base + OMAP3_INTCPS_SYSCONFIG, OMAP3_SYSCONFIG_AUTOIDLE);
