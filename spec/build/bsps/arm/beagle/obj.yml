@@ -32,7 +32,7 @@ source:
 - bsps/arm/beagle/irq/irq.c
 - bsps/arm/beagle/pwm/pwm.c
 - bsps/arm/beagle/rtc/rtc.c
-- bsps/arm/beagle/spi/spi.c
+- bsps/arm/beagle/spi/new-spi.c
 - bsps/arm/beagle/start/bspdebug.c
 - bsps/arm/beagle/start/bspreset.c
 - bsps/arm/beagle/start/bspstart.c

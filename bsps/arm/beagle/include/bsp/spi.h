@@ -27,6 +27,53 @@
 extern "C" {
 #endif /* __cplusplus */
 
+#define BEAGLE_SPI_TIMEOUT 1000
+
+#define BEAGLE_SPI_0_BUS_PATH "/dev/spi-0"
+
+#define AM335X_SPI_MAX_SPEED 48000000
+
+#define MCSPI_EXTCLK_MSK          0xfff
+#define MCSPI_CONF_CLK_SHIFT      2
+#define MCSPI_CONF_CLK_MSK        0xf
+#define MCSPI_CONF_CLKG           (1 << 29)
+#define MCSPI_CTRL_EXTCLK_MSK     0xff
+#define MCSPI_CTRL_EXTCLK_SHIFT   8
+
+typedef struct {
+  uint32_t MCSPI_REVISION;
+  uint32_t dummy1[68];
+  uint32_t MCSPI_SYSCONFIG;
+  uint32_t MCSPI_SYSSTATUS;
+  uint32_t MCSPI_IRQSTATUS;
+  uint32_t MCSPI_IRQENABLE;
+  uint32_t dummy2[2];
+  uint32_t MCSPI_SYST;
+  uint32_t MCSPI_MODULCTRL;
+  uint32_t MCSPI_CH0CONF;
+  uint32_t MCSPI_CH0STAT;
+  uint32_t MCSPI_CH0CTRL;
+  uint32_t MCSPI_TX0;
+  uint32_t MCSPI_RX0;
+  uint32_t MCSPI_CH1CONF;
+  uint32_t MCSPI_CH1STAT;
+  uint32_t MCSPI_CH1CTRL;
+  uint32_t MCSPI_TX1;
+  uint32_t MCSPI_RX1;
+  uint32_t MCSPI_CH2CONF;
+  uint32_t MCSPI_CH2STAT;
+  uint32_t MCSPI_CH2CTRL;
+  uint32_t MCSPI_TX2;
+  uint32_t MCSPI_RX2;
+  uint32_t MCSPI_CH3CONF;
+  uint32_t MCSPI_CH3CTRL;
+  uint32_t MCSPI_TX3;
+  uint32_t MCSPI_RX3;
+  uint32_t MCSPI_XFERLEVEL;
+  uint32_t dummy3[8];
+  uint32_t MCSPI_DAFTX;
+} am335x_spi_regs;
+
 #define BBB_SPI_TIMEOUT 1000
 
 #define BBB_SPI_0_BUS_PATH "/dev/spi-0"
