@@ -19,12 +19,18 @@ typedef struct {
   rtems_id taskid;
   uint8_t cs;
   uint8_t channel;
-  uint32_t speed_hz;
   uint8_t bits_per_word;
+  uint32_t speed_hz;
   uint32_t mode;
+
+  const spi_ioc_transfer *msg;
+  uint32_t todo;
+  uint32_t in_tranfer;
+  const uint8_t *tx_buf;
+  uint8_t *rx_buf;
 } am335x_spi_bus;
 
-static void am335x_spi_clk_config(phandle_t node)
+static void am335x_spi_clk_enable(phandle_t node)
 {
   clk_ident_t spi_clk;
 
@@ -37,8 +43,8 @@ static inline void am335x_spi_clear_irqstatus(
   uint32_t irqs
 )
 {
-  reg->MCSPI_SYST &= ~AM335X_SPI_SYST_SSB;
-  reg->MCSPI_IRQSTATUS = irqs;
+  reg->SYST &= ~AM335X_SPI_SYST_SSB;
+  reg->IRQSTATUS = irqs;
 }
 
 static void am335x_spi_reset(am335x_spi_bus *bus)
@@ -48,10 +54,10 @@ static void am335x_spi_reset(am335x_spi_bus *bus)
 
   regs = (am335x_spi_regs *)bus->regs;
 
-  regs->MCSPI_SYSCONFIG |= AM335X_SPI_SYSCONFIG_SOFTRESET;
+  regs->SYSCONFIG |= AM335X_SPI_SYSCONFIG_SOFTRESET;
 
   while (
-    (regs->MCSPI_SYSSTATUS & AM335X_SPI_SYSSTATUS_RESETDONE) == 0
+    (regs->SYSSTATUS & AM335X_SPI_SYSSTATUS_RESETDONE) == 0
     && timeout--
   ) {
     if (timeout <= 0) {
@@ -88,14 +94,50 @@ am335x_spi_set_clock(am335x_spi_bus *bus, int freq)
     conf = MCSPI_CONF_CLKG | clkdiv << MCSPI_CONF_CLK_SHIFT;
   }
 
-  reg = bus->regs->MCSPI_CH0CTRL;
+  reg = bus->ctrl_reg;
   reg &= ~(MCSPI_CTRL_EXTCLK_MSK << MCSPI_CTRL_EXTCLK_SHIFT);
   reg |= extclk << MCSPI_CTRL_EXTCLK_SHIFT;
-  bus->regs->MCSPI_CH0CTRL = reg;
+  bus->ctrl_reg = reg;
 
-  reg = bus->regs->MCSPI_CH0CONF;
+  reg = bus->conf_reg;
   reg &= ~(MCSPI_CONF_CLKG | MCSPI_CONF_CLK_MSK << MCSPI_CONF_CLK_SHIFT);
-  bus->regs->MCSPI_CH0CONF = reg | conf;
+  bus->conf_reg = reg | conf;
+}
+
+static void am335x_spi_to_buffer(am335x_spi_bus *bus)
+{
+  volatile am335x_spi_regs *regs;
+  const spi_ioc_transfer *msg;
+
+  regs = bus->regs;
+  msg = bus->msg;
+
+  if (bus->msg_todo > 0) {
+
+    if (
+      msg->speed_hz != bus->speed_hz
+        || msg->bits_per_word != bus->bits_per_word
+        || msg->mode != bus->mode
+        || msg->cs != bus->cs
+    ) {
+      am335x_spi_configure(
+        bus,
+        msg->speed_hz,
+        msg->bits_per_word,
+        msg->mode,
+        msg->cs
+      );
+    }
+
+    bus->todo = msg->len;
+    bus->rx_buf = msg->rx_buf;
+    bus->tx_buf = msg->tx_buf;
+
+
+  } else {
+    /* clear interrupts */
+    /* send event */
+  }
 }
 
 static int am335x_spi_transfer(
@@ -105,56 +147,19 @@ static int am335x_spi_transfer(
 )
 {
   am335x_spi_bus *bus;
-  int rv;
+  int rv = 0;
 
   bus = (am335x_spi_bus *) base;
-  (void)bus;
-  (void)rv;
 
-  return -1;
-}
+  bus->todo = msg_count;
+  bus->msg = &msgs[0];
+  bus->taskid = rtems_task_self();
 
-static int am335x_spi_configure(
-  am335x_spi_bus *bus,
-  uint32_t speed_hz,
-  uint32_t mode,
-  uint8_t bits_per_word,
-  uint8_t cs
-)
-{
-  volatile am335x_spi_regs *regs = bus->regs;
+  am335x_spi_to_buffer(bus);
+  rtems_event_transient_receive(RTEMS_WAIT, RTEMS_NO_TIMEOUT);
+  am335x_spi_disable_channel(bus);
 
-  if ( speed_hz > AM335X_SPI_MAX_SPEED || bits_per_word > 32 ) {
-    return -EINVAL;
-  }
-
-  (void) regs;
-  (void) cs;
-  (void) bits_per_word;
-  (void) mode;
-  (void) speed_hz;
-
-
-
-
-  return -1;
-}
-
-static int am335x_spi_setup(spi_bus *base)
-{
-  am335x_spi_bus *bus;
-
-  bus = (am335x_spi_bus *)base;
-
-  am335x_spi_configure(
-    bus,
-    bus->speed_hz,
-    bus->mode,
-    bus->bits_per_word,
-    bus->cs
-  );
-
-  return 0;
+  return rv;
 }
 
 static void am335x_spi_interrupt( void *arg )
@@ -167,7 +172,7 @@ static void am335x_spi_interrupt( void *arg )
   rtems_status_code sc;
   const uint32_t handled_irqs = AM335X_SPI_IRQSTATUS_TX0_EMPTY | AM335X_SPI_IRQSTATUS_RX0_FULL;
 
-  while(((tmp = regs->MCSPI_IRQSTATUS) & handled_irqs) != 0) {
+  while(((tmp = regs->IRQSTATUS) & handled_irqs) != 0) {
     irq |= tmp;
     am335x_spi_clear_irqstatus(regs, tmp);
   }
@@ -185,6 +190,83 @@ static void am335x_spi_interrupt( void *arg )
   (void) sc; /* suppress warning in case of no assert */
 }
 
+
+static int am335x_spi_configure(
+  am335x_spi_bus *bus,
+  uint32_t speed_hz,
+  uint8_t bits_per_word,
+  uint32_t mode,
+  uint8_t cs
+)
+{
+  volatile am335x_spi_regs *regs = bus->regs;
+  volatile uint32_t *ch_conf;
+
+  if ( speed_hz > AM335X_SPI_MAX_SPEED || bits_per_word > 32 || cs > 1 ) {
+    return -EINVAL;
+  }
+
+  /*
+   * Enable transmit/receive mode.
+   * Set SPIDAT[0] as MISO and SPIDAT[1] as MOSI.
+   */
+  ch_conf = (volatile uint32_t *)AM335X_SPI_CH_REG(regs, cs, AM335X_SPI_CH_CONF);
+  ch_conf &= ~AM335X_SPI_CH0CONF_TRM_MASK;
+  ch_conf |= AM335X_SPI_CH0CONF_DPE0;
+  ch_conf &= ~AM335X_SPI_CH0CONF_DPE1;
+  ch_conf &= ~AM335X_SPI_CH0CONF_IS;
+
+  /* Set no of bits per data frame */
+  ch_conf |= AM335X_SPI_CH0CONF_WL(bits_per_word - 1);
+
+  /* Set SPI clock speed */
+  am335x_spi_set_clock(bus, speed_hz);
+
+  /* Configure SPI mode */
+  if ((mode & SPI_CPOL) != 0) {
+    ch_conf |= AM335X_SPI_CH0CONF_POL;
+  } else {
+    ch_conf &= ~AM335X_SPI_CH0CONF_POL;
+  }
+
+  if ((mode & SPI_CPHA) != 0) {
+    ch_conf |= AM335X_SPI_CH0CONF_PHA;
+  } else {
+    ch_conf &= ~AM335X_SPI_CH0CONF_PHA;
+  }
+
+  /* Configure CS as active HIGH/LOW */
+  if ((mode & SPI_CS_HIGH) != 0) {
+    ch_conf &= ~AM335X_SPI_CH0CONF_EPOL;
+  } else {
+    ch_conf |= AM335X_SPI_CH0CONF_EPOL;
+  }
+
+  bus->speed_hz = speed_hz;
+  bus->mode = mode;
+  bus->bits_per_word = bits_per_word;
+  bus->cs = cs;
+
+  return 0;
+}
+
+static int am335x_spi_setup(spi_bus *base)
+{
+  am335x_spi_bus *bus;
+
+  bus = (am335x_spi_bus *)base;
+
+  am335x_spi_configure(
+    bus,
+    bus->speed_hz,
+    bus->bits_per_word,
+    bus->mode,
+    bus->cs
+  );
+
+  return 0;
+}
+
 static int am335x_spi_init(
   am335x_spi_bus *bus,
   phandle_t node
@@ -195,30 +277,27 @@ static int am335x_spi_init(
 
   regs = bus->regs;
 
-  am335x_spi_clk_config(node);
+  am335x_spi_clk_enable(node);
   am335x_spi_reset(bus);
 
   /*
-   * Reference: AM335x TRM, beagle old SPI driver
-   *
-   * TODO: Allow to configure other channels
+   * Enable master mode, slave select, single channel
    */
-  regs->MCSPI_MODULCTRL &= ~AM335X_SPI_MODULCTRL_PIN34;
-  regs->MCSPI_MODULCTRL &= ~AM335X_SPI_MODULCTRL_MS;
-  regs->MCSPI_MODULCTRL |= AM335X_SPI_MODULCTRL_SINGLE;
+  regs->MODULCTRL &= ~AM335X_SPI_MODULCTRL_MS;
+  regs->MODULCTRL &= ~AM335X_SPI_MODULCTRL_PIN34;
+  regs->MODULCTRL |= AM335X_SPI_MODULCTRL_SINGLE;
 
-  regs->MCSPI_CH0CONF &= ~AM335X_SPI_CH0CONF_TRM_MASK;
-  regs->MCSPI_CH0CONF |= AM335X_SPI_CH0CONF_DPE0;
-  regs->MCSPI_CH0CONF &= ~AM335X_SPI_CH0CONF_DPE1;
-  regs->MCSPI_CH0CONF &= ~AM335X_SPI_CH0CONF_IS;
+  /* Clear and disable interrupts */
+  regs->IRQENABLE = 0x0;
+  regs->IRQSTATUS = ~0x0;
 
-  regs->MCSPI_CH0CONF |= AM335X_SPI_CH0CONF_WL(8 - 1);
-
-  regs->MCSPI_CH0CONF &= ~AM335X_SPI_CH0CONF_PHA;
-  regs->MCSPI_CH0CONF &= ~AM335X_SPI_CH0CONF_POL;
-
-  regs->MCSPI_CH0CONF |= AM335X_SPI_CH0CONF_EPOL;
-  regs->MCSPI_CH0CONF |= AM335X_SPI_CH0CONF_CLKD(0x1);
+  am335x_spi_configure(
+    bus,
+    bus->base.max_speed_hz,
+    bus->base.bits_per_word,
+    0,
+    0
+  );
 
   sc = rtems_interrupt_handler_install(
     bus->irq,
@@ -228,7 +307,7 @@ static int am335x_spi_init(
     bus
   );
   if (sc != RTEMS_SUCCESSFUL) {
-    return EAGAIN;
+    return -EAGAIN;
   }
 
   return 0;
