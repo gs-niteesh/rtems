@@ -127,7 +127,7 @@ rtems_status_code bsp_interrupt_facility_initialize(void)
   }
   rv = rtems_ofw_get_reg(node, &intr_reg, sizeof(intr_reg));
   /* Should we fatal? (using assert temporarily) */
-  assert(rv == 8);
+  assert(rv == 1);
 
   omap_intr.base = intr_reg.start;
   omap_intr.size = intr_reg.size;
