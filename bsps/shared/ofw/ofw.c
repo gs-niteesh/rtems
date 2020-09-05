@@ -89,7 +89,7 @@ static void rtems_ofw_init( void ) {
 
 RTEMS_SYSINIT_ITEM(
   rtems_ofw_init,
-  RTEMS_SYSINIT_BSP_PRE_DRIVERS,
+  RTEMS_SYSINIT_BSP_EARLY,
   RTEMS_SYSINIT_ORDER_FIRST
 );
 
