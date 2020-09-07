@@ -12,10 +12,8 @@
 #define EVENT_TXEMPTY     RTEMS_EVENT_0
 #define EVENT_RXFULL      RTEMS_EVENT_1
 
-#define AM335X_SPI_FIFO_SIZE 1
+#define AM335X_SPI_FIFO_SIZE       1
 #define AM335X_SPI_MAX_CHIPSELECTS 2
-
-#define printk 
 
 typedef struct am335x_spi_bus am335x_spi_bus;
 
@@ -47,22 +45,17 @@ static void am335x_spi_clk_enable(phandle_t node)
 {
   clk_ident_t spi_clk;
 
-  printk("SPI START FINISH\n");
   spi_clk = ti_hwmods_get_clock(node);
   ti_prcm_clk_enable(spi_clk);
-  printk("SPI CLOCK FINISH\n");
 }
 
 static void am335x_spi_done(am335x_spi_bus *bus)
 {
-  printk("SPI DONE START\n");
   rtems_event_transient_send(bus->taskid);
-  printk("SPI DONE FINISH\n");
 }
 
 static void am335x_spi_reset(am335x_spi_bus *bus)
 {
-  printk("SPI RESET START\n");
   am335x_spi_regs *regs;
   int timeout = BBB_SPI_TIMEOUT;
 
@@ -81,31 +74,24 @@ static void am335x_spi_reset(am335x_spi_bus *bus)
 
     udelay(1000);
   }
-  printk("SPI RESET FINISH\n");
 }
 
 #define AM335X_SPI_PUSH(type) \
 static void am335x_spi_push_##type(am335x_spi_bus *bus, volatile am335x_spi_regs *regs) \
 { \
   type val = 0; \
-  printk("//////\nTXS (before): %x(hex)\n", regs->CH0STAT);\
   if (bus->tx_buf != NULL) { \
     val = *(type *)bus->tx_buf; \
     bus->tx_buf += sizeof(type); \
   } \
-  printk("pushing: %x(hex)\n", val); \
   bus->todo -= sizeof(type); \
   regs->TX0 = val; \
-  printk("TXS (after): %x(hex)\n//////\n", regs->CH0STAT);\
 }
 
 #define AM335X_SPI_POP(type) \
 static void am335x_spi_pop_##type(am335x_spi_bus *bus, volatile am335x_spi_regs *regs) \
 { \
-  printk("//////\nRXS (before): %x(hex)\n", regs->CH0STAT);\
   uint32_t val = regs->RX0; \
-  printk("poped: %x(hex)\n", val); \
-  printk("RXS (after): %x(hex)\n//////\n", regs->CH0STAT);\
   if (bus->rx_buf != NULL) { \
     *(type *)bus->rx_buf = val; \
     bus->rx_buf += sizeof(type); \
@@ -189,7 +175,6 @@ static void am335x_spi_enable_channel(
 {
   volatile uint32_t *ch_conf;
   volatile uint32_t *ch_ctrl;
-  printk("Enabling channel %d\n", cs);
 
   // ch_ctrl = AM335X_SPI_CH_REG(bus->regs, cs, AM335X_SPI_CH_CTRL);
   ch_conf = AM335X_SPI_CH_REG(bus->regs, cs, AM335X_SPI_CH_CONF);
@@ -214,7 +199,6 @@ static void am335x_spi_disable_channel(
 
   *ch_conf &= ~AM335X_SPI_CH0CONF_FORCE;
   *ch_ctrl &= ~AM335X_SPI_CH0CTRL_EN;
-  printk("Disabling channel %d\n", cs);
 }
 
 static int am335x_spi_configure(
@@ -264,11 +248,9 @@ static void am335x_spi_next_msg(
     /* TODO: Use the correct channel intr values */
     bus->regs->IRQENABLE = AM335X_SPI_IRQENABLE_RX0_FULL | AM335X_SPI_IRQENABLE_TX0_EMPTY;
   } else {
-    printk("before clearing interrupts: %x(hex)\n", bus->regs->IRQSTATUS);
     /* Clear the interrupts */
     bus->regs->SYST &= ~AM335X_SPI_SYST_SSB;
     bus->regs->IRQSTATUS = AM335X_SPI_IRQENABLE_RX0_FULL | AM335X_SPI_IRQENABLE_TX0_EMPTY;
-    printk("after clearing interrupts: %x(hex)\n", bus->regs->IRQSTATUS);
     am335x_spi_done(bus);
   }
 }
@@ -277,16 +259,13 @@ static void am335x_spi_interrupt(void *arg)
 {
   am335x_spi_bus *bus;
   volatile am335x_spi_regs *regs;
-  printk("SPI INTERRUPT START\n");
 
   bus = arg;
   regs = bus->regs;
-  printk("INT STATUS (before): %x(hex)\n", regs->IRQSTATUS);
 
   while (am335x_spi_is_rx_fifo_not_empty(regs) && bus->in_transfer > 0) {
     (*bus->pop)(bus, regs);
     --bus->in_transfer;
-    printk("in poping loop\n");
   }
 
   if (bus->todo > 0) {
@@ -298,8 +277,6 @@ static void am335x_spi_interrupt(void *arg)
     ++bus->msg;
     am335x_spi_next_msg(bus, regs);
   }
-  printk("INT STATUS (after): %x(hex)\n", regs->IRQSTATUS);
-  printk("SPI INTERRUPT END\n");
 }
 
 static int am335x_spi_check_messages(
@@ -333,49 +310,6 @@ static int am335x_spi_check_messages(
 
   return 0;
 }
-static void simple_pop(am335x_spi_bus *bus, uint8_t *pt) {
-  volatile am335x_spi_regs *regs = bus->regs;
-  printk("inside simple pop\n");
-  printk("Before pop REGIST: %x\n", regs->CH0STAT);
-
-  int timeout = 1000;
-  while ((regs->CH0STAT & AM335X_SPI_CH0STAT_RXS) == 0||
-         !(regs->IRQSTATUS & AM335X_SPI_IRQSTATUS_RX0_FULL)) {
-  printk("InLoop pop REGIST: %x\n", regs->CH0STAT);
-  printk("InLoop pop REGIST: %x\n", regs->IRQSTATUS);
-    printk("polling for rx\n");
-    udelay(800);
-    timeout--;
-    if (timeout <= 0) {
-      break;
-    }
-  }
-  *pt = regs->RX0;
-  printk("finish simple pop\n");
-}
-
-static void simple_push(am335x_spi_bus *bus, uint8_t pt) {
-  volatile am335x_spi_regs *regs = bus->regs;
-  printk("inside simple push\n");
-  printk("Before push REGIST: %x\n", regs->CH0STAT);
-
-  int timeout = 1000;
-  while ((regs->CH0STAT & AM335X_SPI_CH0STAT_TXS) == 0||
-         !(regs->IRQSTATUS & AM335X_SPI_IRQSTATUS_TX0_EMPTY)) {
-  printk("InLoop push REGIST: %x\n", regs->CH0STAT);
-  printk("InLoop push REGIST: %x\n", regs->IRQSTATUS);
-    printk("polling for tx\n");
-    udelay(800);
-    timeout--;
-    if (timeout <= 0) {
-      break;
-    }
-  }
-  regs->TX0 = pt;
-  printk("outside simple push\n");
-
-}
-
 
 static int am335x_spi_transfer(
   spi_bus *base,
@@ -383,7 +317,6 @@ static int am335x_spi_transfer(
   uint32_t msg_count
 )
 {
-  printk("SPI TRANSFER START\n");
   am335x_spi_bus *bus;
   int rv;
 
@@ -398,35 +331,12 @@ static int am335x_spi_transfer(
 
   bus->msg_todo = msg_count;
   bus->msg = &msgs[0];
-  printk("////// msg start /////\n");
-  for (int i = 0; i < msg_count; i++) {
-    for (int j = 0; j < msgs[i].len; j++)
-      printk("%x(hex) ", ((uint8_t *)msgs[i].tx_buf)[j]);
-    printk("\n");
-  }
-
-  printk("////// msg end /////\n");
   bus->taskid = rtems_task_self();
-
-/*
-  am335x_spi_configure(bus, 1000000, 8, SPI_MODE_3, 0);
-
-  am335x_spi_enable_channel(bus, 0);
-
-  for (int j = 0; j < msgs[0].len; j++) {
-    simple_push(bus, ((uint8_t *)msgs[0].tx_buf)[j]);
-    simple_pop(bus, &((uint8_t *)msgs[0].rx_buf)[j]);
-  }
-  am335x_spi_disable_channel(bus, bus->cs);
-  return 0;
-  printk("should return but not returning\n");
-*/
 
   am335x_spi_next_msg(bus, bus->regs);
   rtems_event_transient_receive(RTEMS_WAIT, RTEMS_NO_TIMEOUT);
   am335x_spi_disable_channel(bus, bus->cs);
 
-  printk("SPI TRANFER FINISH\n");
   return rv;
 }
 
@@ -438,7 +348,6 @@ static int am335x_spi_configure(
   uint8_t cs
 )
 {
-  printk("SPI CONFIGURE START\n");
   volatile am335x_spi_regs *regs = bus->regs;
   volatile uint32_t *ch_conf;
 
@@ -488,14 +397,12 @@ static int am335x_spi_configure(
   bus->bits_per_word = bits_per_word;
   bus->cs = cs;
 
-  printk("SPI CONFIGURE FINISH\n");
   return 0;
 }
 
 static int am335x_spi_setup(spi_bus *base)
 {
 
-  printk("SPI SETUP START\n");
   am335x_spi_bus *bus;
 
   bus = (am335x_spi_bus *)base;
@@ -508,7 +415,6 @@ static int am335x_spi_setup(spi_bus *base)
     bus->cs
   );
 
-  printk("SPI SETUP FINISH\n");
   return 0;
 }
 
@@ -517,7 +423,6 @@ static int am335x_spi_init(
   phandle_t node
 )
 {
-  printk("SPI INIT START\n");
   rtems_status_code sc;
   volatile am335x_spi_regs *regs;
 
@@ -557,7 +462,6 @@ static int am335x_spi_init(
     return -EAGAIN;
   }
 
-  printk("SPI INIT FINISH\n");
   return 0;
 }
 
@@ -613,7 +517,6 @@ static int am335x_spi_bus_register(
   bus->base.transfer = am335x_spi_transfer;
   bus->base.destroy = am335x_spi_destroy;
 
-  printk("SPI REGISTER FINISH\n");
   return spi_bus_register( &bus->base, bus_path );
 }
 
@@ -622,6 +525,5 @@ int spi_register_0() {
   phandle_t node;
   
   node = rtems_ofw_find_device("/ocp/spi@48030000");
-  printk("SPI REGISTERING START\n");
   return am335x_spi_bus_register(node);
 }
