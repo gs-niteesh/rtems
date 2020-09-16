@@ -1,6 +1,9 @@
 SPDX-License-Identifier: CC-BY-SA-4.0 OR BSD-2-Clause
 build-type: objects
-cflags: []
+cflags:
+- -O1
+- -g3
+- -gdwarf
 copyrights:
 - Copyright (C) 2020 embedded brains GmbH (http://www.embedded-brains.de)
 cppflags: []
@@ -33,6 +36,7 @@ source:
 - bsps/arm/beagle/pwm/pwm.c
 - bsps/arm/beagle/rtc/rtc.c
 - bsps/arm/beagle/spi/new-spi.c
+# - bsps/arm/beagle/spi/spi.c
 - bsps/arm/beagle/start/bspdebug.c
 - bsps/arm/beagle/start/bspreset.c
 - bsps/arm/beagle/start/bspstart.c
