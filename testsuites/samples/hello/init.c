@@ -36,25 +36,21 @@ static rtems_task Init(
 )
 {
 
-  uint8_t buffer[1024] = {
-    0xcb,
-    0xb4,
-    0xbd,
-    0x4e,
+  uint8_t buffer[1] = {
+    0xcb, 0xb4, 0xbd, 0x4e,
     0x8a, 0x36, 0xc4, 0xcc,
     0xd4, 0x69, 0xba, 0x1e,
     0x9a, 0x91, 0xd9, 0xd4,
-    0xea, 0xd4, 0x9e,
-    0xbf
+    0xea, 0xd4, 0x9e, 0xbf
   };
 
   spi_ioc_transfer msg = {
-    .len = 20,
+    .len = sizeof(buffer),
     .rx_buf = buffer,
     .tx_buf = buffer,
     .speed_hz = 100000,
     .bits_per_word = 8,
-    .mode = SPI_MODE_1,
+    .mode = SPI_MODE_0,
     .cs = (uint8_t)0
   };
 
@@ -66,6 +62,9 @@ static rtems_task Init(
   if (fd < 0) {
     perror("opening bus\n");
   }
+
+  printf("Delaying for SPI\n");
+  udelay(500000);
 
   int rv = ioctl(fd, SPI_IOC_MESSAGE(1), &msg);
   if (rv == -1) {

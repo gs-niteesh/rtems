@@ -47,6 +47,11 @@ static void am335x_spi_clk_enable(phandle_t node)
 
   spi_clk = ti_hwmods_get_clock(node);
   ti_prcm_clk_enable(spi_clk);
+  while ( ( AM335X_CM_PER_CONTROL_CLKCTRL_IDLEST_FUNC <<
+            AM335X_CM_PER_CONTROL_CLKCTRL_IDLEST_SHIFT ) !=
+          ( REG( AM335X_CM_PER_ADDR + AM335X_CM_PER_SPI0_CLKCTRL ) &
+            AM335X_CM_PER_CONTROL_CLKCTRL_IDLEST ) )
+    continue;
 }
 
 static void am335x_spi_done(am335x_spi_bus *bus)
@@ -68,7 +73,7 @@ static void am335x_spi_reset(am335x_spi_bus *bus)
     && timeout--
   ) {
     if (timeout <= 0) {
-      printk("ERROR: Timeout in soft-reset\n");
+      printk("SPI Error: Timeout in soft-reset\n");
       return;
     }
 
