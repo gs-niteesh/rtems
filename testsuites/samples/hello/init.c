@@ -36,7 +36,7 @@ static rtems_task Init(
 )
 {
 
-  uint8_t buffer[1] = {
+  uint8_t buffer[20] = {
     0xcb, 0xb4, 0xbd, 0x4e,
     0x8a, 0x36, 0xc4, 0xcc,
     0xd4, 0x69, 0xba, 0x1e,
@@ -45,7 +45,7 @@ static rtems_task Init(
   };
 
   spi_ioc_transfer msg = {
-    .len = sizeof(buffer),
+    .len = 20,
     .rx_buf = buffer,
     .tx_buf = buffer,
     .speed_hz = 100000,
