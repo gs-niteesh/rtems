@@ -1,6 +1,7 @@
 #include <rtems/bspIo.h>
 #include <rtems/score/assert.h>
 #include <dev/spi/spi.h>
+#include <rtems/irq-extension.h>
 #include <libcpu/am335x.h>
 #include <bsp.h>
 #include <bsp/spi.h>
@@ -21,19 +22,40 @@ typedef struct am335x_spi_bus am335x_spi_bus;
 struct am335x_spi_bus {
   spi_bus base;
   volatile am335x_spi_regs *regs;
-  uint32_t speed_hz; /* Unused */
-  uint32_t mode; /* Unused */
-  uint8_t bits_per_word; /* Unused */
-  uint8_t cs; /* Unused */
+  uint32_t speed_hz;
+  uint32_t mode;
+  uint8_t bits_per_word;
+  uint8_t cs;
+  const uint8_t *tx_buf;
+  uint8_t *rx_buf;
+  int msg_todo;
+  int todo;
+  int in_transfer;
   const spi_ioc_transfer *msg;
   rtems_id taskid;
 };
 
+static void am335x_spi_enable_cs(volatile am335x_spi_regs *regs) {
+  SET(regs->CH0CTRL, 1 << 0); /* Enable the channel 0 */
+  SET(regs->CH0CONF, AM335X_SPI_CH0CONF_FORCE); /* Enable SPI Line */
+}
+
+static void am335x_spi_disable_cs(volatile am335x_spi_regs *regs) {
+  CLEAR(regs->CH0CONF, AM335X_SPI_CH0CONF_FORCE); /* Enable SPI Line */
+  CLEAR(regs->CH0CTRL, 1 << 0); /* Enable the channel 0 */
+}
+
+static bool am335x_spi_is_rx_not_empty(volatile am335x_spi_regs *regs)
+{
+
+  return (regs->CH0STAT & AM335X_SPI_CH0STAT_RXS) != 0; /* Bit 1 is RXFULL */
+}
+
 static void am335x_spi_reset(am335x_spi_bus *bus)
 {
-  am335x_spi_regs *regs;
+  volatile am335x_spi_regs *regs;
   int timeout = BBB_SPI_TIMEOUT;
-  regs = (am335x_spi_regs *)bus->regs;
+  regs = (volatile am335x_spi_regs *)bus->regs;
 
   regs->SYSCONFIG |= AM335X_SPI_SYSCONFIG_SOFTRESET;
 
@@ -47,7 +69,121 @@ static void am335x_spi_reset(am335x_spi_bus *bus)
     }
     udelay(1000);
   }
-  printk("reset finished\n");
+}
+
+static void am335x_spi_push(
+  am335x_spi_bus *bus,
+  volatile am335x_spi_regs *regs
+)
+{
+  /*
+   * TODO: Use correct push function based on the message length.
+   * Currently using 8bits as default size.
+   */
+  uint8_t val = 0;
+  if (bus->todo > 0 && bus->tx_buf != NULL) {
+    val = *(bus->tx_buf);
+    bus->tx_buf += 1;
+  }
+  regs->TX0 = val;
+  bus->todo -= 1;
+  ++bus->in_transfer;
+}
+
+static void am335x_spi_pop(
+  am335x_spi_bus *bus,
+  volatile am335x_spi_regs *regs
+)
+{
+  /*
+   * TODO: Use correct push function based on the message length.
+   * Currently using 8bits as default size.
+   */
+  uint8_t val;
+  val = regs->RX0;
+  if (bus->rx_buf != NULL) {
+    *bus->rx_buf = val;
+    bus->rx_buf += 1;
+  }
+}
+
+static void am335x_spi_done(am335x_spi_bus *bus)
+{
+  rtems_event_transient_send(bus->taskid);
+}
+
+static void am335x_spi_next_msg(
+  am335x_spi_bus *bus,
+  volatile am335x_spi_regs *regs
+)
+{
+  if (bus->msg_todo > 0) {
+    const spi_ioc_transfer *msg;
+
+    msg = bus->msg;
+
+    /*
+     * TODO: Check if SPI params have changed.
+     * i.e. Do config again
+     */
+
+    bus->todo = msg->len;
+    bus->rx_buf = msg->rx_buf;
+    bus->tx_buf = msg->tx_buf;
+
+    /* Enable CS */
+    am335x_spi_enable_cs(regs);
+
+    /*
+     * TODO: Allow variable msg width.
+     */
+    am335x_spi_push(bus, regs);
+    /* TODO: Enable interrupts */
+    regs->IRQENABLE = AM335X_SPI_IRQENABLE_TX0_EMPTY;
+  } else {
+    printk("Disabling interrupts\n");
+    regs->IRQENABLE = 0;
+    regs->IRQSTATUS = ~0;
+    am335x_spi_done(bus);
+  }
+}
+
+static void am335x_spi_interrupt(void *arg)
+{
+  am335x_spi_bus *bus;
+  volatile am335x_spi_regs *regs;
+  bus = arg;
+  regs = bus->regs;
+  printk("spi: Got an interrupt\n");
+  printk("spi: CH0STAT: %x\n", regs->CH0STAT);
+  printk("spi: Sys STAT: %x\n", regs->IRQSTATUS);
+
+
+  while (am335x_spi_is_rx_not_empty(regs)) {
+    printk("poping\n");
+    am335x_spi_pop(bus, regs);
+    --bus->in_transfer;
+  }
+
+  if (regs->IRQSTATUS & AM335X_SPI_IRQSTATUS_RX0_FULL) {
+    SET(regs->IRQSTATUS, AM335X_SPI_IRQSTATUS_RX0_FULL);
+  }
+  if (regs->IRQSTATUS & AM335X_SPI_IRQSTATUS_TX0_EMPTY) {
+    SET(regs->IRQSTATUS, AM335X_SPI_IRQSTATUS_TX0_EMPTY);
+  }
+
+  if (bus->todo > 0) {
+    printk("pushing\n");
+    am335x_spi_push(bus, regs);
+  } else if (bus->in_transfer > 0) {
+    printk("enabling RX0\n");
+    regs->IRQENABLE = AM335X_SPI_IRQENABLE_RX0_FULL;
+  } else {
+    printk("nxt msg");
+    --bus->msg_todo;
+    ++bus->msg;
+    am335x_spi_next_msg(bus, regs);
+  }
 }
 
 static int am335x_spi_transfer(
@@ -62,47 +198,29 @@ static int am335x_spi_transfer(
   bus = (am335x_spi_bus *) base;
   regs = bus->regs;
 
-  SET(regs->CH0CTRL, 1 << 0); /* Enable the channel */
+  /*
+   * TODO: Added message checks
+   */
+  SET(regs->CH0CTRL, 1 << 0); /* Enable the channel 0 */
   SET(regs->CH0CONF, AM335X_SPI_CH0CONF_FORCE); /* Enable SPI Line */
 
-  for (int i = 0; i < msgs->len; i++) {
-    /*
-     * Should I wait for the tranmission to get complete?
-     */
-    int timeout = 1000;
-    while (--timeout > 0 && ((regs->CH0STAT & AM335X_SPI_CH0STAT_TXS) == 0)) {
-        udelay(10);
-    }
-    if (timeout == 0)
-      printk("push timeout\n");
+  bus->msg_todo = msg_count;
+  bus->msg = &msgs[0];
+  bus->taskid = rtems_task_self();
 
-    /*
-     * NOTE: The first byte is pushed properly but it timeouts on second bit
-     */
-    printk("pushing: %x\n", ((uint8_t *)msgs->tx_buf)[i]);
-    regs->TX0 = ((uint8_t *)msgs->tx_buf)[i];
-
-    timeout = 1000;
-    while (--timeout > 0 && ((regs->CH0STAT & AM335X_SPI_CH0STAT_RXS) == 0) {
-      udelay(10);
-    }
-    if (timeout == 0)
-      printk("pull timeout\n");
-    ((uint8_t *)msgs->rx_buf)[i] = regs->RX0;
-  }
-  CLEAR(regs->CH0CONF, AM335X_SPI_CH0CONF_FORCE); /* Disable SPI Line*/
-  CLEAR(regs->CH0CTRL, 1 << 0); /* Disable the channel */
-
+  am335x_spi_next_msg(bus, regs);
+  rtems_event_transient_receive(RTEMS_WAIT, RTEMS_NO_TIMEOUT);
+  am335x_spi_disable_cs(regs);
   return 0;
 }
 
-static int am335x_spi_init(am335x_spi_bus *bus);
+static int am335x_spi_init(am335x_spi_bus *bus, phandle_t node);
 
 static int am335x_spi_setup(spi_bus *base)
 {
   /* Single channel master mode 4pin SPI */
   /* 2Mhz clock */
-  return am335x_spi_init((am335x_spi_bus *) base);
+  return 0;
 }
 
 static void am335x_spi_destroy( spi_bus *base )
@@ -113,28 +231,12 @@ static void am335x_spi_destroy( spi_bus *base )
   spi_bus_destroy_and_free(&bus->base);
 }
 
-static void am335x_spi_clock_enable(void)
+static void am335x_spi_clock_enable(phandle_t node)
 {
-  /* Writing to MODULEMODE field of AM335X_CM_PER_SPI0_CLKCTRL register. */
-  REG( AM335X_CM_PER_ADDR + AM335X_CM_PER_SPI0_CLKCTRL ) |=
-    AM335X_CM_PER_SPI0_CLKCTRL_MODULEMODE_ENABLE;
+  clk_ident_t spi_clk;
 
-  /* Waiting for MODULEMODE field to reflect the written value. */
-  while ( AM335X_CM_PER_SPI0_CLKCTRL_MODULEMODE_ENABLE !=
-          ( REG( AM335X_CM_PER_ADDR + AM335X_CM_PER_SPI0_CLKCTRL ) &
-            AM335X_CM_PER_SPI0_CLKCTRL_MODULEMODE ) )
-    continue;
-
-  /*
-   * Waiting for IDLEST field in AM335X_CM_PER_SPI0_CLKCTRL
-   * register to attain desired value.
-   */
-  while ( ( AM335X_CM_PER_CONTROL_CLKCTRL_IDLEST_FUNC <<
-            AM335X_CM_PER_CONTROL_CLKCTRL_IDLEST_SHIFT ) !=
-          ( REG( AM335X_CM_PER_ADDR + AM335X_CM_PER_SPI0_CLKCTRL ) &
-            AM335X_CM_PER_CONTROL_CLKCTRL_IDLEST ) )
-    continue;
-  printk("SPI clock enable finish\n");
+  spi_clk = ti_hwmods_get_clock(node);
+  ti_prcm_clk_enable(spi_clk);
 }
 
 /*
@@ -180,15 +282,14 @@ static void am335x_spi_clock_setup(am335x_spi_bus *bus, uint32_t freq)
     regs->CH0CONF &= ~0x0000003Cu;
     /* Configure the clkD field of MCSPI_CHCONF register.*/
     regs->CH0CONF |= (clkD << AM335X_SPI_CH0CONF_CLKD_SHIFT);
-    printk("CLOCK CH0CONF %x\n", regs->CH0CONF);
 }
 
-static int am335x_spi_init(am335x_spi_bus *bus)
+static int am335x_spi_init(am335x_spi_bus *bus, phandle_t node)
 {
   volatile am335x_spi_regs *regs = bus->regs;
 
   /* Enable the clocks */
-  am335x_spi_clock_enable();
+  am335x_spi_clock_enable(node);
   /* reset the controller */
   am335x_spi_reset(bus);
   /* setup the freq */
@@ -253,11 +354,30 @@ static int am335x_spi_bus_register(
     return EINVAL;
   }
 
+  uint32_t irq;
+  rv = rtems_ofw_get_interrupts(node, &irq, sizeof(irq));
+  if (rv != 1) {
+    printk("spi: Failed to read interrupts\n");
+    return EAGAIN;
+  }
+
+  rv = rtems_interrupt_handler_install(
+    irq,
+    "SPI",
+    RTEMS_INTERRUPT_UNIQUE,
+    am335x_spi_interrupt,
+    bus
+  );
+  if (rv != RTEMS_SUCCESSFUL) {
+    printk("spi: Failed to install interrupt handler\n");
+    return EAGAIN;
+  }
+
   bus->regs = (volatile am335x_spi_regs *)reg.start;
   bus->base.max_speed_hz = AM335X_SPI_MAX_SPEED;
   bus->base.bits_per_word = 8;
 
-  rv = am335x_spi_init(bus);
+  rv = am335x_spi_init(bus, node);
   if (rv != 0) {
     (*bus->base.destroy)(&bus->base);
     rtems_set_errno_and_return_minus_one(rv);
